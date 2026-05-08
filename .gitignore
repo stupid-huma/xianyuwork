@@ -1,0 +1,60 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# PyCharm
+.idea/
+*.iml
+
+# Secrets
+.env
+*.token
+secrets.json
+config.local.py
+
+# Logs
+logs/
+*.log
+
+# Runtime image/data folders
+data/incoming/*
+data/incoming/_consumed/*
+data/orders/*
+data/edited/*
+data/preview/*
+data/final/*
+data/tmp/*
+data/temp/*
+
+# Keep folder structure
+!data/incoming/.gitkeep
+!data/incoming/_consumed/.gitkeep
+!data/orders/.gitkeep
+!data/edited/.gitkeep
+!data/preview/.gitkeep
+!data/final/.gitkeep
+
+# Old top-level folders, if any
+incoming/*
+edited/*
+preview/*
+final/*
+outputs/*
+tmp/
+temp/
+
+!incoming/.gitkeep
+!edited/.gitkeep
+!preview/.gitkeep
+!final/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db

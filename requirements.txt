@@ -1,0 +1,16 @@
+python-dotenv==1.0.1
+pydantic==2.8.2
+pydantic-settings==2.4.0
+
+SQLAlchemy==2.0.32
+
+Pillow==10.4.0
+watchdog==4.0.2
+
+python-telegram-bot==21.4
+
+loguru==0.7.2
+aiofiles==24.1.0
+
+# Optional: later if you want to connect OpenAI API
+# openai==1.40.6
