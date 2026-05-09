@@ -6,15 +6,30 @@ class OrderStatus(StrEnum):
     订单主状态。
 
     这个状态机用于描述一个闲鱼修图订单从创建到交付的完整生命周期。
+    状态名必须表达真实业务含义，尤其要区分：
+    - 审核通过
+    - 预览已发给买家
+    - 买家已确认
     """
 
     CREATED = "created"
     WAITING_FOR_IMAGES = "waiting_for_images"
     IMAGES_RECEIVED = "images_received"
+
+    WAITING_FOR_EDITED = "waiting_for_edited"
     PROCESSING = "processing"
+
     WAITING_FOR_REVIEW = "waiting_for_review"
+    REVIEW_APPROVED = "review_approved"
+    REWORK_REQUIRED = "rework_required"
+
     PREVIEW_SENT = "preview_sent"
+    BUYER_CONFIRMED = "buyer_confirmed"
+
+    # 旧版本状态，保留用于兼容已有 SQLite / metadata 历史记录。
+    # 新流程不再主动写入这个状态。
     WAITING_FOR_BUYER_CONFIRM = "waiting_for_buyer_confirm"
+
     FINAL_SENT = "final_sent"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
@@ -78,12 +93,13 @@ class OrderEvent(StrEnum):
     状态机事件。
 
     OrderService 不应该随意改状态，而应该通过事件驱动状态变化。
-    这样以后接入闲鱼、Telegram、QQ 时，逻辑仍然清晰。
+    这样以后接入闲鱼、Telegram、QQ、API 处理时，逻辑仍然清晰。
     """
 
     CREATE_ORDER = "create_order"
     REQUEST_IMAGES = "request_images"
     RECEIVE_IMAGES = "receive_images"
+    WAIT_FOR_EDITED = "wait_for_edited"
     START_PROCESSING = "start_processing"
     FINISH_PROCESSING = "finish_processing"
     SUBMIT_REVIEW = "submit_review"
