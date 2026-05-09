@@ -60,9 +60,6 @@ class TelegramWorkflowBot:
         self.admin_user_id = self.settings.telegram_admin_user_id
 
     def build_application(self) -> Application:
-        """
-        创建 python-telegram-bot Application。
-        """
         application = ApplicationBuilder().token(self.settings.telegram_bot_token).build()
 
         application.add_handler(CommandHandler(BotCommandName.START.value, self.handle_start))
@@ -75,20 +72,13 @@ class TelegramWorkflowBot:
         application.add_handler(CommandHandler(BotCommandName.APPROVE.value, self.handle_approve))
         application.add_handler(CommandHandler(BotCommandName.REJECT.value, self.handle_reject))
 
-        application.add_handler(
-            CommandHandler(BotCommandName.PREVIEW_SENT.value, self.handle_preview_sent)
-        )
-        application.add_handler(
-            CommandHandler(BotCommandName.BUYER_CONFIRMED.value, self.handle_buyer_confirmed)
-        )
-        application.add_handler(
-            CommandHandler(BotCommandName.FINAL_SENT.value, self.handle_final_sent)
-        )
+        application.add_handler(CommandHandler(BotCommandName.PREVIEW_SENT.value, self.handle_preview_sent))
+        application.add_handler(CommandHandler(BotCommandName.BUYER_CONFIRMED.value, self.handle_buyer_confirmed))
+        application.add_handler(CommandHandler(BotCommandName.FINAL_SENT.value, self.handle_final_sent))
         application.add_handler(CommandHandler(BotCommandName.COMPLETE.value, self.handle_complete))
         application.add_handler(CommandHandler(BotCommandName.CANCEL.value, self.handle_cancel))
 
         application.add_handler(CallbackQueryHandler(self.handle_callback))
-
         return application
 
     # ------------------------------------------------------------------
@@ -322,10 +312,7 @@ class TelegramWorkflowBot:
             command = self._parse_update_command(update)
             order_id = require_order_id(command)
             order = self.service.complete_order(order_id)
-            await self._reply_text(
-                update,
-                f"🎉 订单已完成：<code>{order.order_id}</code>",
-            )
+            await self._reply_text(update, f"🎉 订单已完成：<code>{order.order_id}</code>")
         except Exception as exc:
             await self._reply_text(update, build_error_text(exc))
 
@@ -546,7 +533,7 @@ class TelegramWorkflowBot:
 
         return "\n".join(lines)
 
-    def _available_actions(self, order) -> list[str]:
+    def _available_actions(self, order: object) -> list[str]:
         if order.status in {OrderStatus.WAITING_FOR_EDITED, OrderStatus.REWORK_REQUIRED}:
             edited_dir = get_project_paths().edited_dir(order.order_id)
             return [
@@ -599,48 +586,32 @@ class TelegramWorkflowBot:
     def _build_after_approve_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("📤 已发预览", callback_data=f"preview_sent:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("📤 已发预览", callback_data=f"preview_sent:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
     def _build_after_preview_sent_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("✅ 买家已确认", callback_data=f"buyer_confirmed:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("✅ 买家已确认", callback_data=f"buyer_confirmed:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
     def _build_after_buyer_confirmed_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("📦 已发高清", callback_data=f"final_sent:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("📦 已发高清", callback_data=f"final_sent:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
     def _build_after_final_sent_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("🎉 完成订单", callback_data=f"complete:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("🎉 完成订单", callback_data=f"complete:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
@@ -716,18 +687,11 @@ class TelegramWorkflowBot:
 
 
 def build_telegram_application() -> Application:
-    """
-    构建 Telegram Application。
-    run_bot.py 会调用它。
-    """
     init_db()
     bot = TelegramWorkflowBot()
     return bot.build_application()
 
 
 def run_telegram_bot() -> None:
-    """
-    启动 Telegram Bot 长轮询。
-    """
     application = build_telegram_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES)
