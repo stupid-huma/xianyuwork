@@ -70,9 +70,6 @@ class ParsedCallback:
 
     callback_data 格式：
         action:order_id
-
-    示例：
-        approve:ORD_20260507_153012_0001_a3f91c
     """
 
     action: CallbackAction
@@ -148,13 +145,13 @@ def build_help_text() -> str:
             "",
             "常用命令：",
             "<code>/list</code> - 查看最近订单",
-            "<code>/status ORD_xxx</code> - 查看订单状态",
-            "<code>/process ORD_xxx</code> - 无 API 测试处理，生成水印预览图",
+            "<code>/status ORD_xxx</code> - 查看订单状态与建议操作",
+            "<code>/process ORD_xxx</code> - 按 IMAGE_PROCESSOR_MODE 处理。local 模式只提示 edited 目录，with_api 模式后续用于自动处理",
             "<code>/previews ORD_xxx</code> - 重新发送水印预览图给你审核",
             "",
             "审核命令：",
-            "<code>/approve ORD_xxx</code> - 审核通过",
-            "<code>/reject ORD_xxx 原因</code> - 打回重做",
+            "<code>/approve ORD_xxx</code> - 内部审核通过，状态进入 review_approved",
+            "<code>/reject ORD_xxx 原因</code> - 打回重做，状态进入 rework_required",
             "",
             "交付状态：",
             "<code>/preview_sent ORD_xxx</code> - 标记已把水印预览发给买家",
@@ -164,11 +161,13 @@ def build_help_text() -> str:
             "<code>/cancel ORD_xxx 原因</code> - 取消订单",
             "",
             "推荐流程：",
-            "1. 把图片放入 <code>data/incoming/</code>",
-            "2. worker 自动生成订单和水印预览",
-            "3. Bot 收到审核通知",
-            "4. 审核通过后，你手动发预览给买家",
-            "5. 买家确认后，再发送高清无水印版本",
+            "1. 把买家原图放入 <code>data/incoming/</code>",
+            "2. worker 自动建单并保存 original，local 模式进入 waiting_for_edited",
+            "3. 你手动或用外部工具处理图片，把成图放入订单 edited 目录",
+            "4. edited_watcher 自动生成水印 preview，并通知你审核",
+            "5. 审核通过后，订单进入 review_approved，但还没有发给买家",
+            "6. 你手动发水印预览给买家，再执行 preview_sent",
+            "7. 买家确认后，再执行 buyer_confirmed / final_sent / complete",
         ]
     )
 
