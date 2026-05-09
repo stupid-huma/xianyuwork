@@ -10,7 +10,8 @@ class ProjectPaths:
     settings.py 负责读取 .env；
     paths.py 负责把业务路径组织成更好用的方法。
 
-    后续订单文件、原图、预览图、高清图、水印图，都会通过这里统一生成路径。
+    后续订单文件、原图、成图、预览图、高清图和打回归档图，
+    都会通过这里统一生成路径。
     """
 
     def __init__(self) -> None:
@@ -65,6 +66,15 @@ class ProjectPaths:
         """
         return self.order_dir(order_id) / "final"
 
+    def rejected_dir(self, order_id: str) -> Path:
+        """
+        审核打回后旧 edited / preview / final 文件的归档目录。
+
+        打回时把旧成图移出 edited/，可以避免 edited_watcher 重启后
+        再次把旧文件当成新的重修图处理。
+        """
+        return self.order_dir(order_id) / "rejected"
+
     def metadata_path(self, order_id: str) -> Path:
         """
         单个订单的元数据 JSON 文件。
@@ -82,6 +92,7 @@ class ProjectPaths:
         self.edited_dir(order_id).mkdir(parents=True, exist_ok=True)
         self.preview_dir(order_id).mkdir(parents=True, exist_ok=True)
         self.final_dir(order_id).mkdir(parents=True, exist_ok=True)
+        self.rejected_dir(order_id).mkdir(parents=True, exist_ok=True)
 
     def build_original_image_path(self, order_id: str, filename: str) -> Path:
         return self.original_dir(order_id) / filename
@@ -96,6 +107,16 @@ class ProjectPaths:
 
     def build_final_image_path(self, order_id: str, filename: str) -> Path:
         return self.final_dir(order_id) / filename
+
+    def build_rejected_image_path(
+        self,
+        order_id: str,
+        filename: str,
+        prefix: str,
+    ) -> Path:
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix or ".jpg"
+        return self.rejected_dir(order_id) / f"{prefix}_{stem}{suffix}"
 
     def is_supported_image(self, path: Path) -> bool:
         """

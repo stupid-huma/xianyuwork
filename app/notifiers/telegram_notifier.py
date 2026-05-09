@@ -22,8 +22,8 @@ class TelegramNotifier:
     Telegram 通知器。
 
     当前版本支持两类通知：
-    1. 新订单待处理（还没有 preview，只提醒你去处理并把成图放进 edited/）
-    2. preview 已生成，进入审核阶段
+    1. 新订单待处理：还没有 preview，只提醒你去处理并把成图放进 edited/
+    2. preview 已生成：进入内部审核阶段
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
@@ -238,9 +238,9 @@ class TelegramNotifier:
                 [
                     "",
                     "处理说明：",
-                    "1. 你手动修图",
+                    "1. 你手动修图或用外部工具处理",
                     "2. 把修好的成图放入上面的 edited 目录",
-                    "3. edited_watcher 会自动生成 preview 并再次通知你审核",
+                    "3. edited_watcher 会自动生成 preview 并通知你审核",
                 ]
             )
         else:
@@ -284,6 +284,7 @@ class TelegramNotifier:
         lines.extend(
             [
                 "",
+                "此阶段只做内部审核；审核通过不等于已经发给买家。",
                 "你可以点击按钮审核，也可以使用命令：",
                 f"<code>/approve {order.order_id}</code>",
                 f"<code>/reject {order.order_id} 需要重做的原因</code>",
@@ -335,24 +336,11 @@ class TelegramNotifier:
         return InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton(
-                        "✅ 审核通过",
-                        callback_data=f"approve:{order_id}",
-                    ),
-                    InlineKeyboardButton(
-                        "❌ 打回重做",
-                        callback_data=f"reject:{order_id}",
-                    ),
+                    InlineKeyboardButton("✅ 审核通过", callback_data=f"approve:{order_id}"),
+                    InlineKeyboardButton("❌ 打回重做", callback_data=f"reject:{order_id}"),
                 ],
                 [
-                    InlineKeyboardButton(
-                        "📤 标记已发预览",
-                        callback_data=f"preview_sent:{order_id}",
-                    ),
-                    InlineKeyboardButton(
-                        "📦 标记已发高清",
-                        callback_data=f"final_sent:{order_id}",
-                    ),
+                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
                 ],
             ]
         )

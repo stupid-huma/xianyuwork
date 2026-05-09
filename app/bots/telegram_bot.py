@@ -28,6 +28,7 @@ from app.bots.commands import (
 from app.core.enums import OrderStatus, ReviewDecision
 from app.core.order_service import OrderNotFoundError, OrderService, order_service
 from app.storage.database import init_db
+from config.paths import get_project_paths
 from config.settings import Settings, get_settings
 
 
@@ -59,9 +60,6 @@ class TelegramWorkflowBot:
         self.admin_user_id = self.settings.telegram_admin_user_id
 
     def build_application(self) -> Application:
-        """
-        创建 python-telegram-bot Application。
-        """
         application = ApplicationBuilder().token(self.settings.telegram_bot_token).build()
 
         application.add_handler(CommandHandler(BotCommandName.START.value, self.handle_start))
@@ -74,20 +72,13 @@ class TelegramWorkflowBot:
         application.add_handler(CommandHandler(BotCommandName.APPROVE.value, self.handle_approve))
         application.add_handler(CommandHandler(BotCommandName.REJECT.value, self.handle_reject))
 
-        application.add_handler(
-            CommandHandler(BotCommandName.PREVIEW_SENT.value, self.handle_preview_sent)
-        )
-        application.add_handler(
-            CommandHandler(BotCommandName.BUYER_CONFIRMED.value, self.handle_buyer_confirmed)
-        )
-        application.add_handler(
-            CommandHandler(BotCommandName.FINAL_SENT.value, self.handle_final_sent)
-        )
+        application.add_handler(CommandHandler(BotCommandName.PREVIEW_SENT.value, self.handle_preview_sent))
+        application.add_handler(CommandHandler(BotCommandName.BUYER_CONFIRMED.value, self.handle_buyer_confirmed))
+        application.add_handler(CommandHandler(BotCommandName.FINAL_SENT.value, self.handle_final_sent))
         application.add_handler(CommandHandler(BotCommandName.COMPLETE.value, self.handle_complete))
         application.add_handler(CommandHandler(BotCommandName.CANCEL.value, self.handle_cancel))
 
         application.add_handler(CallbackQueryHandler(self.handle_callback))
-
         return application
 
     # ------------------------------------------------------------------
@@ -156,9 +147,10 @@ class TelegramWorkflowBot:
 
     async def handle_process(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
-        无 API 测试处理。
+        按 IMAGE_PROCESSOR_MODE 处理订单。
 
-        用原图生成 edited 图，再生成水印预览图，并发送给管理员审核。
+        - local：不自动处理，只提示把成图放入 edited/
+        - with_api：后续接 API 后通过 OrderService.process_order() 处理
         """
         if not await self._ensure_admin(update):
             return
@@ -167,10 +159,21 @@ class TelegramWorkflowBot:
             command = self._parse_update_command(update)
             order_id = require_order_id(command)
 
+            if self.settings.image_processor_mode == "local":
+                edited_dir = get_project_paths().edited_dir(order_id)
+                await self._reply_text(
+                    update,
+                    "ℹ️ 当前是 <code>local</code> 模式，不会自动生成 edited 图。\n\n"
+                    "请手动或用外部工具处理图片，然后把成图放入：\n"
+                    f"<code>{escape_html(edited_dir.as_posix())}</code>\n\n"
+                    "之后 edited_watcher 会自动生成水印预览图并通知你审核。",
+                )
+                return
+
             order = self.service.process_order(order_id)
             await self._reply_text(
                 update,
-                f"✅ 已生成水印预览图，订单进入：<code>{order.status.value}</code>",
+                f"✅ 已处理并生成水印预览图，订单进入：<code>{order.status.value}</code>",
                 reply_markup=self._build_review_keyboard(order.order_id),
             )
             await self._send_preview_images(update, order.order_id)
@@ -207,8 +210,10 @@ class TelegramWorkflowBot:
             await self._reply_text(
                 update,
                 f"✅ 审核通过。订单状态：<code>{order.status.value}</code>\n\n"
-                f"下一步：你可以把水印预览图发给买家，然后执行：\n"
+                "注意：这只代表你内部审核通过，还没有发给买家。\n"
+                "下一步：把水印预览图发给买家，然后执行：\n"
                 f"<code>/preview_sent {order.order_id}</code>",
+                reply_markup=self._build_after_approve_keyboard(order.order_id),
             )
         except Exception as exc:
             await self._reply_text(update, build_error_text(exc))
@@ -225,10 +230,13 @@ class TelegramWorkflowBot:
                 decision=ReviewDecision.REJECT,
                 message=command.message or "Telegram command rejected",
             )
+            edited_dir = get_project_paths().edited_dir(order.order_id)
             await self._reply_text(
                 update,
                 f"❌ 已打回重做。订单状态：<code>{order.status.value}</code>\n"
-                f"原因：<code>{escape_html(command.message or '未填写')}</code>",
+                f"原因：<code>{escape_html(command.message or '未填写')}</code>\n\n"
+                "请重新处理图片，并把新成图放入：\n"
+                f"<code>{escape_html(edited_dir.as_posix())}</code>",
             )
         except Exception as exc:
             await self._reply_text(update, build_error_text(exc))
@@ -247,9 +255,10 @@ class TelegramWorkflowBot:
             order = self.service.mark_preview_sent(order_id)
             await self._reply_text(
                 update,
-                f"📤 已标记预览图发给买家。订单状态：<code>{order.status.value}</code>\n\n"
-                f"买家满意 / 确认收货后执行：\n"
+                f"📤 已标记水印预览图发给买家。订单状态：<code>{order.status.value}</code>\n\n"
+                "买家满意 / 确认收货后执行：\n"
                 f"<code>/buyer_confirmed {order.order_id}</code>",
+                reply_markup=self._build_after_preview_sent_keyboard(order.order_id),
             )
         except Exception as exc:
             await self._reply_text(update, build_error_text(exc))
@@ -265,8 +274,9 @@ class TelegramWorkflowBot:
             await self._reply_text(
                 update,
                 f"✅ 已标记买家确认。订单状态：<code>{order.status.value}</code>\n\n"
-                f"现在可以准备发送高清无水印图：\n"
+                "现在可以准备发送高清无水印图：\n"
                 f"<code>/final_sent {order.order_id}</code>",
+                reply_markup=self._build_after_buyer_confirmed_keyboard(order.order_id),
             )
         except Exception as exc:
             await self._reply_text(update, build_error_text(exc))
@@ -283,7 +293,8 @@ class TelegramWorkflowBot:
             await self._reply_text(
                 update,
                 f"📦 已准备最终高清图，并标记已发送。订单状态：<code>{order.status.value}</code>\n"
-                f"下面发送 final 目录中的高清文件给你备份。",
+                "下面发送 final 目录中的高清文件给你备份。",
+                reply_markup=self._build_after_final_sent_keyboard(order.order_id),
             )
             await self._send_final_images(update, order.order_id)
             await self._reply_text(
@@ -301,10 +312,7 @@ class TelegramWorkflowBot:
             command = self._parse_update_command(update)
             order_id = require_order_id(command)
             order = self.service.complete_order(order_id)
-            await self._reply_text(
-                update,
-                f"🎉 订单已完成：<code>{order.order_id}</code>",
-            )
+            await self._reply_text(update, f"🎉 订单已完成：<code>{order.order_id}</code>")
         except Exception as exc:
             await self._reply_text(update, build_error_text(exc))
 
@@ -344,9 +352,10 @@ class TelegramWorkflowBot:
                 order = self.service.approve_review(parsed.order_id, message="Approved by button")
                 await query.edit_message_text(
                     text=(
-                        f"✅ 审核通过。\n"
+                        "✅ 审核通过。\n"
                         f"订单：<code>{order.order_id}</code>\n"
-                        f"状态：<code>{order.status.value}</code>"
+                        f"状态：<code>{order.status.value}</code>\n\n"
+                        "下一步：把水印预览图发给买家后，点击下方按钮。"
                     ),
                     parse_mode=ParseMode.HTML,
                     reply_markup=self._build_after_approve_keyboard(order.order_id),
@@ -355,11 +364,14 @@ class TelegramWorkflowBot:
 
             if parsed.action == CallbackAction.REJECT:
                 order = self.service.reject_review(parsed.order_id, message="Rejected by button")
+                edited_dir = get_project_paths().edited_dir(order.order_id)
                 await query.edit_message_text(
                     text=(
-                        f"❌ 已打回重做。\n"
+                        "❌ 已打回重做。\n"
                         f"订单：<code>{order.order_id}</code>\n"
-                        f"状态：<code>{order.status.value}</code>"
+                        f"状态：<code>{order.status.value}</code>\n\n"
+                        "请把重修后的成图放入：\n"
+                        f"<code>{escape_html(edited_dir.as_posix())}</code>"
                     ),
                     parse_mode=ParseMode.HTML,
                 )
@@ -369,7 +381,7 @@ class TelegramWorkflowBot:
                 order = self.service.mark_preview_sent(parsed.order_id)
                 await query.edit_message_text(
                     text=(
-                        f"📤 已标记预览图发给买家。\n"
+                        "📤 已标记预览图发给买家。\n"
                         f"订单：<code>{order.order_id}</code>\n"
                         f"状态：<code>{order.status.value}</code>"
                     ),
@@ -382,7 +394,7 @@ class TelegramWorkflowBot:
                 order = self.service.mark_buyer_confirmed(parsed.order_id)
                 await query.edit_message_text(
                     text=(
-                        f"✅ 已标记买家确认。\n"
+                        "✅ 已标记买家确认。\n"
                         f"订单：<code>{order.order_id}</code>\n"
                         f"状态：<code>{order.status.value}</code>"
                     ),
@@ -395,7 +407,7 @@ class TelegramWorkflowBot:
                 order = self.service.mark_final_sent(parsed.order_id)
                 await query.edit_message_text(
                     text=(
-                        f"📦 已准备最终高清图，并标记已发送。\n"
+                        "📦 已准备最终高清图，并标记已发送。\n"
                         f"订单：<code>{order.order_id}</code>\n"
                         f"状态：<code>{order.status.value}</code>"
                     ),
@@ -514,17 +526,45 @@ class TelegramWorkflowBot:
                     f"{escape_html(image.filename)}"
                 )
 
-        lines.extend(["", "可用操作："])
-        lines.append(f"<code>/process {order.order_id}</code>")
-        lines.append(f"<code>/previews {order.order_id}</code>")
-        lines.append(f"<code>/approve {order.order_id}</code>")
-        lines.append(f"<code>/reject {order.order_id} 原因</code>")
-        lines.append(f"<code>/preview_sent {order.order_id}</code>")
-        lines.append(f"<code>/buyer_confirmed {order.order_id}</code>")
-        lines.append(f"<code>/final_sent {order.order_id}</code>")
-        lines.append(f"<code>/complete {order.order_id}</code>")
+        actions = self._available_actions(order)
+        if actions:
+            lines.extend(["", "当前建议操作："])
+            lines.extend(actions)
 
         return "\n".join(lines)
+
+    def _available_actions(self, order: object) -> list[str]:
+        if order.status in {OrderStatus.WAITING_FOR_EDITED, OrderStatus.REWORK_REQUIRED}:
+            edited_dir = get_project_paths().edited_dir(order.order_id)
+            return [
+                "把处理完成的图片放入：",
+                f"<code>{escape_html(edited_dir.as_posix())}</code>",
+                f"<code>/status {order.order_id}</code>",
+            ]
+
+        if order.status == OrderStatus.WAITING_FOR_REVIEW:
+            return [
+                f"<code>/previews {order.order_id}</code>",
+                f"<code>/approve {order.order_id}</code>",
+                f"<code>/reject {order.order_id} 原因</code>",
+            ]
+
+        if order.status == OrderStatus.REVIEW_APPROVED:
+            return [f"<code>/preview_sent {order.order_id}</code>"]
+
+        if order.status == OrderStatus.PREVIEW_SENT:
+            return [f"<code>/buyer_confirmed {order.order_id}</code>"]
+
+        if order.status == OrderStatus.BUYER_CONFIRMED:
+            return [f"<code>/final_sent {order.order_id}</code>"]
+
+        if order.status == OrderStatus.FINAL_SENT:
+            return [f"<code>/complete {order.order_id}</code>"]
+
+        if order.status in {OrderStatus.IMAGES_RECEIVED, OrderStatus.PROCESSING, OrderStatus.FAILED}:
+            return [f"<code>/process {order.order_id}</code>"]
+
+        return []
 
     # ------------------------------------------------------------------
     # Keyboards
@@ -546,48 +586,32 @@ class TelegramWorkflowBot:
     def _build_after_approve_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("📤 已发预览", callback_data=f"preview_sent:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("📤 已发预览", callback_data=f"preview_sent:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
     def _build_after_preview_sent_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("✅ 买家已确认", callback_data=f"buyer_confirmed:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("✅ 买家已确认", callback_data=f"buyer_confirmed:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
     def _build_after_buyer_confirmed_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("📦 已发高清", callback_data=f"final_sent:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("📦 已发高清", callback_data=f"final_sent:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
     def _build_after_final_sent_keyboard(self, order_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("🎉 完成订单", callback_data=f"complete:{order_id}"),
-                ],
-                [
-                    InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}"),
-                ],
+                [InlineKeyboardButton("🎉 完成订单", callback_data=f"complete:{order_id}")],
+                [InlineKeyboardButton("📌 查看状态", callback_data=f"status:{order_id}")],
             ]
         )
 
@@ -663,18 +687,11 @@ class TelegramWorkflowBot:
 
 
 def build_telegram_application() -> Application:
-    """
-    构建 Telegram Application。
-    run_bot.py 会调用它。
-    """
     init_db()
     bot = TelegramWorkflowBot()
     return bot.build_application()
 
 
 def run_telegram_bot() -> None:
-    """
-    启动 Telegram Bot 长轮询。
-    """
     application = build_telegram_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES)

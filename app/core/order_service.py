@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from app.core.enums import ImageStatus, OrderEvent, OrderStatus, ReviewDecision, SourceType
@@ -34,6 +36,7 @@ class OrderService:
        - local 模式：人工放入 edited
        - with_api 模式：API 输出到 edited
     3. preview 只能从 edited 生成
+    4. 审核通过、预览已发、买家确认必须是不同状态
     """
 
     TRANSITIONS: dict[OrderEvent, tuple[set[OrderStatus] | None, OrderStatus]] = {
@@ -46,36 +49,49 @@ class OrderService:
             {OrderStatus.CREATED, OrderStatus.WAITING_FOR_IMAGES, OrderStatus.IMAGES_RECEIVED},
             OrderStatus.IMAGES_RECEIVED,
         ),
+        OrderEvent.WAIT_FOR_EDITED: (
+            {OrderStatus.IMAGES_RECEIVED, OrderStatus.REWORK_REQUIRED, OrderStatus.FAILED},
+            OrderStatus.WAITING_FOR_EDITED,
+        ),
         OrderEvent.START_PROCESSING: (
-            {OrderStatus.IMAGES_RECEIVED, OrderStatus.FAILED},
+            {
+                OrderStatus.IMAGES_RECEIVED,
+                OrderStatus.WAITING_FOR_EDITED,
+                OrderStatus.REWORK_REQUIRED,
+                OrderStatus.FAILED,
+            },
             OrderStatus.PROCESSING,
         ),
         OrderEvent.FINISH_PROCESSING: (
-            {OrderStatus.PROCESSING},
+            {OrderStatus.PROCESSING, OrderStatus.WAITING_FOR_EDITED, OrderStatus.REWORK_REQUIRED},
             OrderStatus.WAITING_FOR_REVIEW,
         ),
         OrderEvent.SUBMIT_REVIEW: (
-            {OrderStatus.PROCESSING, OrderStatus.WAITING_FOR_REVIEW},
+            {OrderStatus.PROCESSING, OrderStatus.WAITING_FOR_EDITED, OrderStatus.WAITING_FOR_REVIEW},
             OrderStatus.WAITING_FOR_REVIEW,
         ),
         OrderEvent.APPROVE_REVIEW: (
             {OrderStatus.WAITING_FOR_REVIEW},
-            OrderStatus.PREVIEW_SENT,
+            OrderStatus.REVIEW_APPROVED,
         ),
         OrderEvent.REJECT_REVIEW: (
-            {OrderStatus.WAITING_FOR_REVIEW},
-            OrderStatus.PROCESSING,
+            {OrderStatus.WAITING_FOR_REVIEW, OrderStatus.REVIEW_APPROVED},
+            OrderStatus.REWORK_REQUIRED,
         ),
         OrderEvent.SEND_PREVIEW: (
-            {OrderStatus.WAITING_FOR_REVIEW, OrderStatus.PREVIEW_SENT},
-            OrderStatus.WAITING_FOR_BUYER_CONFIRM,
+            {OrderStatus.REVIEW_APPROVED},
+            OrderStatus.PREVIEW_SENT,
         ),
         OrderEvent.BUYER_CONFIRMED: (
-            {OrderStatus.PREVIEW_SENT, OrderStatus.WAITING_FOR_BUYER_CONFIRM},
-            OrderStatus.WAITING_FOR_BUYER_CONFIRM,
+            {
+                OrderStatus.PREVIEW_SENT,
+                # 兼容旧版本数据。
+                OrderStatus.WAITING_FOR_BUYER_CONFIRM,
+            },
+            OrderStatus.BUYER_CONFIRMED,
         ),
         OrderEvent.SEND_FINAL: (
-            {OrderStatus.WAITING_FOR_BUYER_CONFIRM},
+            {OrderStatus.BUYER_CONFIRMED},
             OrderStatus.FINAL_SENT,
         ),
         OrderEvent.COMPLETE_ORDER: (
@@ -87,9 +103,13 @@ class OrderService:
                 OrderStatus.CREATED,
                 OrderStatus.WAITING_FOR_IMAGES,
                 OrderStatus.IMAGES_RECEIVED,
+                OrderStatus.WAITING_FOR_EDITED,
                 OrderStatus.PROCESSING,
                 OrderStatus.WAITING_FOR_REVIEW,
+                OrderStatus.REVIEW_APPROVED,
+                OrderStatus.REWORK_REQUIRED,
                 OrderStatus.PREVIEW_SENT,
+                OrderStatus.BUYER_CONFIRMED,
                 OrderStatus.WAITING_FOR_BUYER_CONFIRM,
             },
             OrderStatus.CANCELLED,
@@ -99,9 +119,13 @@ class OrderService:
                 OrderStatus.CREATED,
                 OrderStatus.WAITING_FOR_IMAGES,
                 OrderStatus.IMAGES_RECEIVED,
+                OrderStatus.WAITING_FOR_EDITED,
                 OrderStatus.PROCESSING,
                 OrderStatus.WAITING_FOR_REVIEW,
+                OrderStatus.REVIEW_APPROVED,
+                OrderStatus.REWORK_REQUIRED,
                 OrderStatus.PREVIEW_SENT,
+                OrderStatus.BUYER_CONFIRMED,
                 OrderStatus.WAITING_FOR_BUYER_CONFIRM,
                 OrderStatus.FINAL_SENT,
             },
@@ -245,6 +269,17 @@ class OrderService:
     # 处理与 edited / preview
     # ---------------------------------------------------------------------
 
+    def wait_for_edited(self, order_id: str) -> Order:
+        """
+        local 模式使用：收图完成后等待人工/API 外部程序把成图放入 edited/。
+        """
+        order = self.get_order(order_id)
+        return self._transition(
+            order,
+            OrderEvent.WAIT_FOR_EDITED,
+            message="Waiting for edited images",
+        )
+
     def start_processing(self, order_id: str) -> Order:
         order = self.get_order(order_id)
         if not order.images:
@@ -272,7 +307,7 @@ class OrderService:
 
         适用场景：
         - 手动修图后，把图交给系统录入
-        - 其他程序处理后，把结果图录入 edited
+        - API 或其他程序处理后，把结果图录入 edited
         """
         order = self.get_order(order_id)
         image = self._get_image(order, image_id)
@@ -305,7 +340,7 @@ class OrderService:
         if mode == "local":
             raise RuntimeError(
                 "Local mode does not auto-generate edited images. "
-                "Please manually place finished images into data/orders/{order_id}/edited/, "
+                f"Please manually place finished images into data/orders/{order_id}/edited/, "
                 "then let edited_watcher generate previews."
             )
 
@@ -358,44 +393,60 @@ class OrderService:
 
         你后续接入 OpenAI API 或其他图像处理后端时，
         就在这里完成“原图 -> edited 图”的处理，并返回生成后的 edited 路径。
-
-        当前默认不实现，避免误以为 local 模式会自动生成 edited。
         """
         raise NotImplementedError(
             "with_api processor is reserved but not implemented yet. "
             "Implement your API backend here and return the final edited image path."
         )
 
+    def generate_preview_for_image(self, order_id: str, image_id: str) -> Order:
+        """
+        只为指定图片从 edited 生成 preview。
+
+        这用于 edited_watcher，避免多图订单中每来一张 edited 就重复生成所有 preview。
+        """
+        order = self.get_order(order_id)
+        image = self._get_image(order, image_id)
+
+        if image.edited_path is None:
+            raise ValueError(f"Edited image not found for image: {image_id}")
+
+        preview_path = self.processor.generate_preview_with_watermark(
+            order_id=order.order_id,
+            source_path=image.edited_path,
+            output_filename=image.filename,
+        )
+        image.mark_preview_generated(preview_path)
+        self._save(order)
+
+        if self._all_images_have_previews(order):
+            order = self._transition(
+                order,
+                OrderEvent.FINISH_PROCESSING,
+                message="Generated watermarked previews from edited images",
+                save_before_transition=True,
+            )
+
+        return order
+
     def generate_previews(self, order_id: str) -> Order:
         """
-        仅从 edited 图片生成 preview。
+        从所有已有 edited 图片生成 preview。
 
         规则：
-        - edited 有图：才允许生成 preview
-        - original 不再作为兜底来源
+        - 只处理有 edited_path 的图片
+        - 不再从 original 兜底
+        - 所有图片都有 preview 后，订单进入 WAITING_FOR_REVIEW
         """
         order = self.get_order(order_id)
 
         if not order.images:
             raise ValueError(f"Order has no images: {order_id}")
 
-        if order.status in {OrderStatus.IMAGES_RECEIVED, OrderStatus.FAILED}:
-            for image in order.images:
-                if image.status in {ImageStatus.RECEIVED, ImageStatus.REJECTED, ImageStatus.FAILED}:
-                    image.mark_editing()
-
-            order = self._transition(
-                order,
-                OrderEvent.START_PROCESSING,
-                message="Started processing before preview generation",
-                save_before_transition=True,
-            )
-
         preview_count = 0
 
         for image in order.images:
             if image.edited_path is None:
-                image.mark_failed("Edited image not found, cannot generate preview")
                 continue
 
             preview_path = self.processor.generate_preview_with_watermark(
@@ -414,20 +465,20 @@ class OrderService:
                 "No preview images were generated from edited images",
             )
 
-        order = self._transition(
-            order,
-            OrderEvent.FINISH_PROCESSING,
-            message="Generated watermarked previews from edited images",
-            save_before_transition=True,
-        )
+        if self._all_images_have_previews(order):
+            order = self._transition(
+                order,
+                OrderEvent.FINISH_PROCESSING,
+                message="Generated watermarked previews from edited images",
+                save_before_transition=True,
+            )
+
         return order
 
     def process_order_without_ai(self, order_id: str) -> Order:
         """
         旧接口保留，但当前工作流已不再支持：
-        “无 API 时自动复制 original 作为 edited”。
-
-        现在 local 模式必须人工把处理完成图放进 edited/。
+        “local 模式自动复制 original 作为 edited”。
         """
         raise RuntimeError(
             "process_order_without_ai() is deprecated in the current workflow. "
@@ -458,6 +509,9 @@ class OrderService:
     def approve_review(self, order_id: str, message: str | None = None) -> Order:
         order = self.get_order(order_id)
 
+        if not order.preview_paths:
+            raise ValueError(f"Order has no preview images to approve: {order_id}")
+
         for image in order.images:
             if image.status == ImageStatus.PREVIEW_GENERATED:
                 image.mark_approved()
@@ -471,15 +525,20 @@ class OrderService:
 
     def reject_review(self, order_id: str, message: str | None = None) -> Order:
         order = self.get_order(order_id)
+        reason = message or "Rejected by reviewer"
 
         for image in order.images:
             if image.status in {ImageStatus.PREVIEW_GENERATED, ImageStatus.APPROVED}:
-                image.mark_rejected(message or "Rejected by reviewer")
+                self._archive_rejected_image_paths(order, image)
+                image.mark_rejected(reason)
+                image.edited_path = None
+                image.preview_path = None
+                image.final_path = None
 
         return self._transition(
             order,
             OrderEvent.REJECT_REVIEW,
-            message=message or "Review rejected; back to processing",
+            message=reason,
             save_before_transition=True,
         )
 
@@ -618,6 +677,62 @@ class OrderService:
             if image.image_id == image_id:
                 return image
         raise ValueError(f"Image not found: {image_id}")
+
+    def _all_images_have_previews(self, order: Order) -> bool:
+        return bool(order.images) and all(image.preview_path is not None for image in order.images)
+
+    def _archive_rejected_image_paths(self, order: Order, image: OrderImage) -> None:
+        for label, path in (
+            ("edited", image.edited_path),
+            ("preview", image.preview_path),
+            ("final", image.final_path),
+        ):
+            self._archive_rejected_file(
+                order_id=order.order_id,
+                image_id=image.image_id,
+                label=label,
+                path=path,
+            )
+
+    def _archive_rejected_file(
+        self,
+        order_id: str,
+        image_id: str,
+        label: str,
+        path: Path | None,
+    ) -> None:
+        if path is None or not path.exists() or not path.is_file():
+            return
+
+        rejected_dir = self.paths.rejected_dir(order_id)
+        rejected_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_image_id = image_id.replace("/", "_").replace("\\", "_")
+        prefix = f"{timestamp}_{safe_image_id}_{label}"
+        target_path = self.paths.build_rejected_image_path(
+            order_id=order_id,
+            filename=path.name,
+            prefix=prefix,
+        )
+        target_path = self._avoid_archive_overwrite(target_path)
+
+        shutil.move(str(path), str(target_path))
+
+    def _avoid_archive_overwrite(self, target_path: Path) -> Path:
+        if not target_path.exists():
+            return target_path
+
+        stem = target_path.stem
+        suffix = target_path.suffix
+        parent = target_path.parent
+
+        index = 1
+        while True:
+            candidate = parent / f"{stem}_{index:03d}{suffix}"
+            if not candidate.exists():
+                return candidate
+            index += 1
 
 
 order_service = OrderService()
