@@ -19,7 +19,7 @@ from config.settings import Settings, get_settings
 @dataclass
 class EditedWatcherResult:
     """
-    单次人工修图回流处理结果。
+    单次 edited 回流处理结果。
     """
 
     order_id: str
@@ -31,33 +31,23 @@ class EditedWatcherResult:
 
 class EditedWatcher:
     """
-        edited 成图回流监听 worker。
+    edited 成图回流监听 worker。
 
-        当前工作流：
+    当前工作流：
+    1. incoming 收到买家原图
+    2. folder_watcher 创建订单，并把原图放入 original/
+    3. 图片处理完成后，成图被放入 data/orders/{order_id}/edited/
+    4. edited_watcher 发现新成图
+    5. 绑定到订单图片
+    6. 只为当前这张 edited 图生成带水印 preview
+    7. 全部图片都有 preview 后，订单进入 WAITING_FOR_REVIEW 并通知 Telegram 审核
 
-        1. incoming 收到买家原图
-        2. folder_watcher 创建订单，并把原图放入 original/
-        3. 图片处理完成后，成图被放入：
-
-            data/orders/{order_id}/edited/
-
-        4. edited_watcher 自动发现 edited 里的新图
-        5. 绑定到订单图片
-        6. 从 edited 生成带水印 preview
-        7. Telegram 通知你审核 preview
-
-        edited/ 里的图片来源可以是：
-
-        - local 模式下你手动修好的图
-        - with_api 模式下 API 生成的图
-        - 以后其他处理后端生成的图
-
-        核心规则：
-
-        - edited/ 只放真正处理完成的成图
-        - preview/ 只能从 edited/ 生成
-        - 不再从 original/ 兜底生成 preview
-        """
+    重要规则：
+    - edited/ 只放真正处理完成的成图
+    - preview/ 只能从 edited/ 生成
+    - 不再从 original/ 兜底生成 preview
+    - 同名文件重修后，只要文件大小或修改时间变化，就允许重新处理
+    """
 
     def __init__(
         self,
@@ -74,16 +64,13 @@ class EditedWatcher:
         self.notify_telegram = notify_telegram
         self._running = False
 
-        # 避免同一轮运行中重复处理同一个文件
-        self._seen_files: set[str] = set()
+        # path -> (mtime_ns, size)
+        # 相同路径但文件被覆盖时，签名会变化，因此可以重新处理同名重修图。
+        self._seen_file_signatures: dict[str, tuple[int, int]] = {}
 
     def run_once(self) -> list[EditedWatcherResult]:
         """
         扫描所有可能等待 edited 回流的订单。
-
-        适合调试：
-
-            python -m app.workers.edited_watcher
         """
         init_db()
 
@@ -96,6 +83,13 @@ class EditedWatcher:
             for edited_file in edited_files:
                 result = self._handle_edited_file(order, edited_file)
                 results.append(result)
+
+                # 同一个订单可能因为上一张图处理后状态变化，这里刷新一次，避免后续处理使用旧状态。
+                if result.success:
+                    try:
+                        order = self.service.get_order(order.order_id)
+                    except Exception:
+                        logger.exception(f"Failed to refresh order after edited handling: {order.order_id}")
 
         if not results:
             logger.debug("No manual edited files found")
@@ -135,17 +129,15 @@ class EditedWatcher:
         """
         找出可能正在等待 edited 成图的订单。
 
-        主要包含：
-
-        - IMAGES_RECEIVED：local 模式下刚收图，等待你手动修
-        - PROCESSING：审核打回后，等待重新处理
-        - WAITING_FOR_REVIEW：允许重新放 edited 覆盖生成新 preview
+        - WAITING_FOR_EDITED：local 模式下刚收图，等待人工修图
+        - PROCESSING：with_api 或外部程序正在处理，允许成图回流
+        - REWORK_REQUIRED：审核打回后，等待重修图
         - FAILED：允许人工补救
         """
         statuses = [
-            OrderStatus.IMAGES_RECEIVED,
+            OrderStatus.WAITING_FOR_EDITED,
             OrderStatus.PROCESSING,
-            OrderStatus.WAITING_FOR_REVIEW,
+            OrderStatus.REWORK_REQUIRED,
             OrderStatus.FAILED,
         ]
 
@@ -181,18 +173,20 @@ class EditedWatcher:
             if not self.paths.is_supported_image(path):
                 continue
 
-            resolved = path.resolve().as_posix()
-
-            # 已经绑定到订单图片的 edited_path，不重复处理
-            if resolved in known_paths:
-                continue
-
-            # 当前 watcher 运行期间已经处理过的，也不重复处理
-            if resolved in self._seen_files:
-                continue
-
-            # 跳过明显的临时文件
             if path.name.startswith("~") or path.name.startswith("."):
+                continue
+
+            resolved = path.resolve().as_posix()
+            signature = self._file_signature(path)
+            seen_signature = self._seen_file_signatures.get(resolved)
+
+            # 已经绑定且文件没有变化，不重复处理。
+            # 如果同名文件被覆盖，mtime/size 会变化，可以重新处理。
+            if resolved in known_paths and seen_signature == signature:
+                continue
+
+            # 当前 watcher 运行期间已经处理过且文件没有变化，不重复处理。
+            if seen_signature == signature:
                 continue
 
             files.append(path)
@@ -211,11 +205,12 @@ class EditedWatcher:
         )
 
         try:
-            logger.info(f"Handling manual edited file: {edited_file}")
+            logger.info(f"Handling edited file: {edited_file}")
 
             if not self.store.wait_until_file_stable(edited_file):
                 raise RuntimeError(f"File is not stable or timed out: {edited_file}")
 
+            order = self.service.get_order(order.order_id)
             image = self._match_image(order, edited_file)
 
             if image is None:
@@ -224,38 +219,36 @@ class EditedWatcher:
                     f"{edited_file.name}"
                 )
 
-            # 关键点：
-            # 这里不再复制 original，不再自动生成 edited。
-            # 你放进 edited/ 的文件，就是真正的处理完成图。
             image.mark_edited(edited_file)
-
-            # 先保存 edited_path，再让 order_service 从 edited_path 生成 preview
             self.service.repository.save_order(order)
             self.service.store.save_order_metadata(order)
 
-            refreshed_order = self.service.generate_previews(order.order_id)
+            refreshed_order = self.service.generate_preview_for_image(
+                order_id=order.order_id,
+                image_id=image.image_id,
+            )
 
             result.image_id = image.image_id
             result.success = True
-            self._seen_files.add(edited_file.resolve().as_posix())
+            self._remember_file(edited_file)
 
             logger.info(
                 f"Generated preview from edited file: "
                 f"order={order.order_id}, image={image.image_id}, file={edited_file.name}"
             )
 
-            if self.notify_telegram:
+            if self.notify_telegram and refreshed_order.status == OrderStatus.WAITING_FOR_REVIEW:
                 self._notify_review_if_possible(refreshed_order)
 
             return result
 
         except Exception as exc:
-            logger.exception(f"Failed to handle manual edited file: {edited_file}")
+            logger.exception(f"Failed to handle edited file: {edited_file}")
 
             result.success = False
             result.error = str(exc)
 
-            self._seen_files.add(edited_file.resolve().as_posix())
+            self._remember_file(edited_file)
             self._write_error_file(edited_file, exc)
 
             return result
@@ -265,40 +258,27 @@ class EditedWatcher:
         将 edited/ 里的成图匹配到订单中的某张原图。
 
         匹配优先级：
-
         1. 完整文件名匹配
-           original: image.jpg
-           edited:   image.jpg
-
         2. 文件 stem 匹配
-           original: image.jpg
-           edited:   image.png
-
         3. 第一张还没有 edited_path 的图片
-
         4. 第一张处于待处理 / 重做 / 失败状态的图片
-
         5. 如果订单只有一张图，直接匹配
         """
         edited_name = edited_file.name.lower()
         edited_stem = edited_file.stem.lower()
 
-        # 1. 完整文件名匹配
         for image in order.images:
             if image.filename.lower() == edited_name:
                 return image
 
-        # 2. 文件 stem 匹配
         for image in order.images:
             if Path(image.filename).stem.lower() == edited_stem:
                 return image
 
-        # 3. 优先匹配还没有 edited_path 的图片
         for image in order.images:
             if image.edited_path is None:
                 return image
 
-        # 4. 匹配处于待处理 / 被拒绝 / 失败状态的图片
         for image in order.images:
             if image.status in {
                 ImageStatus.RECEIVED,
@@ -308,7 +288,6 @@ class EditedWatcher:
             }:
                 return image
 
-        # 5. 单图订单兜底
         if len(order.images) == 1:
             return order.images[0]
 
@@ -339,6 +318,14 @@ class EditedWatcher:
             logger.exception("Failed to send Telegram review notification")
         except Exception:
             logger.exception("Unexpected error while sending Telegram notification")
+
+    def _file_signature(self, path: Path) -> tuple[int, int]:
+        stat = path.stat()
+        return stat.st_mtime_ns, stat.st_size
+
+    def _remember_file(self, path: Path) -> None:
+        if path.exists() and path.is_file():
+            self._seen_file_signatures[path.resolve().as_posix()] = self._file_signature(path)
 
 
 def build_edited_watcher(notify_telegram: bool = True) -> EditedWatcher:
