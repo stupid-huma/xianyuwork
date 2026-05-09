@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from app.core.enums import ImageStatus, OrderEvent, OrderStatus, ReviewDecision, SourceType
@@ -527,8 +529,8 @@ class OrderService:
 
         for image in order.images:
             if image.status in {ImageStatus.PREVIEW_GENERATED, ImageStatus.APPROVED}:
+                self._archive_rejected_image_paths(order, image)
                 image.mark_rejected(reason)
-                # 关键：清理旧路径，允许同名 edited 文件重修后被 watcher 再次处理。
                 image.edited_path = None
                 image.preview_path = None
                 image.final_path = None
@@ -678,6 +680,59 @@ class OrderService:
 
     def _all_images_have_previews(self, order: Order) -> bool:
         return bool(order.images) and all(image.preview_path is not None for image in order.images)
+
+    def _archive_rejected_image_paths(self, order: Order, image: OrderImage) -> None:
+        for label, path in (
+            ("edited", image.edited_path),
+            ("preview", image.preview_path),
+            ("final", image.final_path),
+        ):
+            self._archive_rejected_file(
+                order_id=order.order_id,
+                image_id=image.image_id,
+                label=label,
+                path=path,
+            )
+
+    def _archive_rejected_file(
+        self,
+        order_id: str,
+        image_id: str,
+        label: str,
+        path: Path | None,
+    ) -> None:
+        if path is None or not path.exists() or not path.is_file():
+            return
+
+        rejected_dir = self.paths.rejected_dir(order_id)
+        rejected_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_image_id = image_id.replace("/", "_").replace("\\", "_")
+        prefix = f"{timestamp}_{safe_image_id}_{label}"
+        target_path = self.paths.build_rejected_image_path(
+            order_id=order_id,
+            filename=path.name,
+            prefix=prefix,
+        )
+        target_path = self._avoid_archive_overwrite(target_path)
+
+        shutil.move(str(path), str(target_path))
+
+    def _avoid_archive_overwrite(self, target_path: Path) -> Path:
+        if not target_path.exists():
+            return target_path
+
+        stem = target_path.stem
+        suffix = target_path.suffix
+        parent = target_path.parent
+
+        index = 1
+        while True:
+            candidate = parent / f"{stem}_{index:03d}{suffix}"
+            if not candidate.exists():
+                return candidate
+            index += 1
 
 
 order_service = OrderService()
