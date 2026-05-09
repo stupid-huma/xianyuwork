@@ -41,13 +41,15 @@ class FolderWatcher:
     5. 根据 IMAGE_PROCESSOR_MODE 决定下一步：
 
        - local:
-         不自动生成 edited
-         只通知 Telegram：有新订单待处理，请把修好的图放进 edited/
+         不自动生成 edited / preview
+         订单进入 WAITING_FOR_EDITED
+         Telegram 只提醒：请把修好的图放进 edited/
 
        - with_api:
          自动调用 order_service.process_order()
-         → 生成 edited
-         → 再生成 preview
+         → API 输出 edited
+         → 生成 preview
+         → 订单进入 WAITING_FOR_REVIEW
          → Telegram 发预览待审核通知
     """
 
@@ -57,14 +59,14 @@ class FolderWatcher:
         service: OrderService | None = None,
         store: FileStore | None = None,
         settings: Settings | None = None,
-        auto_process_without_ai: bool = True,
+        auto_process: bool = True,
         notify_telegram: bool = True,
     ) -> None:
         self.source = source or folder_image_source
         self.service = service or order_service
         self.store = store or file_store
         self.settings = settings or get_settings()
-        self.auto_process_without_ai = auto_process_without_ai
+        self.auto_process = auto_process
         self.notify_telegram = notify_telegram
         self._running = False
 
@@ -93,7 +95,7 @@ class FolderWatcher:
         logger.info(f"Incoming directory: {self.source.incoming_dir}")
         logger.info(f"Watch interval: {self.settings.watch_interval_seconds}s")
         logger.info(f"Telegram notification: {self.notify_telegram}")
-        logger.info(f"IMAGE_PROCESSOR_MODE: {getattr(self.settings, 'image_processor_mode', 'local')}")
+        logger.info(f"IMAGE_PROCESSOR_MODE: {self.settings.image_processor_mode}")
 
         try:
             while self._running:
@@ -131,10 +133,10 @@ class FolderWatcher:
             self.source.mark_consumed(source_image)
             logger.info(f"Moved incoming file to consumed: {source_image.filename}")
 
-            processor_mode = getattr(self.settings, "image_processor_mode", "local")
+            processor_mode = self.settings.image_processor_mode
 
             if processor_mode == "with_api":
-                if self.auto_process_without_ai:
+                if self.auto_process:
                     logger.info(f"with_api mode detected, processing order: {order.order_id}")
                     try:
                         order = self.service.process_order(order.order_id, processor_mode="with_api")
@@ -144,8 +146,9 @@ class FolderWatcher:
                 else:
                     logger.info(
                         "with_api mode is enabled, but auto processing is disabled by CLI option. "
-                        "Order will remain waiting for external handling."
+                        "Order will remain waiting for edited images."
                     )
+                    order = self.service.wait_for_edited(order.order_id)
 
                 if self.notify_telegram:
                     if order.status == OrderStatus.WAITING_FOR_REVIEW:
@@ -157,6 +160,7 @@ class FolderWatcher:
                 logger.info(
                     f"local mode detected. Order {order.order_id} will wait for manual edited images."
                 )
+                order = self.service.wait_for_edited(order.order_id)
                 if self.notify_telegram:
                     self._notify_pending_processing_if_possible(order, processor_mode="local")
 
@@ -219,7 +223,7 @@ class FolderWatcher:
 
     def _notify_status_if_possible(self, order: Order) -> None:
         """
-        with_api 模式处理失败时，发一条订单状态通知。
+        with_api 模式处理失败或等待外部处理时，发一条订单状态通知。
         """
         if not self.settings.telegram_bot_token or self.settings.telegram_admin_user_id is None:
             logger.warning("Telegram is not configured. Skipped order-status notification.")
@@ -236,22 +240,22 @@ class FolderWatcher:
 
 
 def build_folder_watcher(
-    auto_process_without_ai: bool = True,
+    auto_process: bool = True,
     notify_telegram: bool = True,
 ) -> FolderWatcher:
     return FolderWatcher(
-        auto_process_without_ai=auto_process_without_ai,
+        auto_process=auto_process,
         notify_telegram=notify_telegram,
     )
 
 
 def run_folder_watcher(
     once: bool = False,
-    auto_process_without_ai: bool = True,
+    auto_process: bool = True,
     notify_telegram: bool = True,
 ) -> list[FolderWatcherResult] | None:
     watcher = build_folder_watcher(
-        auto_process_without_ai=auto_process_without_ai,
+        auto_process=auto_process,
         notify_telegram=notify_telegram,
     )
 
