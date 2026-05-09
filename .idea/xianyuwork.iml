@@ -3,6 +3,13 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/data/incoming" />
+      <excludeFolder url="file://$MODULE_DIR$/data/orders/ORD_20260508_1/edited" />
+      <excludeFolder url="file://$MODULE_DIR$/data/orders/ORD_20260508_1/final" />
+      <excludeFolder url="file://$MODULE_DIR$/data/orders/ORD_20260508_1/preview" />
+      <excludeFolder url="file://$MODULE_DIR$/data/orders/ORD_20260508_2/edited" />
+      <excludeFolder url="file://$MODULE_DIR$/data/orders/ORD_20260508_2/final" />
+      <excludeFolder url="file://$MODULE_DIR$/data/orders/ORD_20260508_2/preview" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.13 (xianyuwork)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
