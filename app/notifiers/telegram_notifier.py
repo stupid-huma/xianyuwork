@@ -22,8 +22,8 @@ class TelegramNotifier:
     Telegram 通知器。
 
     当前版本支持两类通知：
-    1. 新订单待处理（还没有 preview，只提醒你去处理并把成图放进 edited/）
-    2. preview 已生成，进入审核阶段
+    1. 新订单待处理：还没有 preview，只提醒你去处理并把成图放进 edited/
+    2. preview 已生成：进入内部审核阶段
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
