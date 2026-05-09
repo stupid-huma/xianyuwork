@@ -38,13 +38,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-auto-process",
         action="store_true",
-        help="关闭无 API 自动处理。开启后 folder worker 只建单收图，不自动生成水印预览。",
+        help=(
+            "关闭 with_api 自动处理。local 模式本来不会自动生成 edited/preview；"
+            "开启后 folder worker 只建单收图，等待 edited 回流。"
+        ),
     )
 
     parser.add_argument(
         "--no-telegram",
         action="store_true",
-        help="不发送 Telegram 审核通知。适合本地测试。",
+        help="不发送 Telegram 通知。适合本地测试。",
     )
 
     parser.add_argument(
@@ -71,7 +74,7 @@ def setup_logging(level: str) -> None:
 
 def run_once(
     mode: WorkerMode,
-    auto_process_without_ai: bool,
+    auto_process: bool,
     notify_telegram: bool,
 ) -> None:
     """
@@ -82,14 +85,15 @@ def run_once(
     if mode in {"folder", "both"}:
         folder_results = run_folder_watcher(
             once=True,
-            auto_process_without_ai=auto_process_without_ai,
+            auto_process=auto_process,
             notify_telegram=notify_telegram,
         ) or []
         logger.info(f"Folder watcher processed {len(folder_results)} item(s)")
         for result in folder_results:
             if result.success and result.order:
                 logger.info(
-                    f"OK folder image={result.source_image.filename}, order={result.order.order_id}, status={result.order.status.value}"
+                    f"OK folder image={result.source_image.filename}, "
+                    f"order={result.order.order_id}, status={result.order.status.value}"
                 )
             else:
                 logger.error(
@@ -105,17 +109,19 @@ def run_once(
         for result in edited_results:
             if result.success:
                 logger.info(
-                    f"OK edited file={result.edited_file}, order={result.order_id}, image={result.image_id}"
+                    f"OK edited file={result.edited_file}, "
+                    f"order={result.order_id}, image={result.image_id}"
                 )
             else:
                 logger.error(
-                    f"FAILED edited file={result.edited_file}, order={result.order_id}, error={result.error}"
+                    f"FAILED edited file={result.edited_file}, "
+                    f"order={result.order_id}, error={result.error}"
                 )
 
 
 def run_forever(
     mode: WorkerMode,
-    auto_process_without_ai: bool,
+    auto_process: bool,
     notify_telegram: bool,
 ) -> None:
     """
@@ -126,7 +132,7 @@ def run_forever(
     if mode == "folder":
         run_folder_watcher(
             once=False,
-            auto_process_without_ai=auto_process_without_ai,
+            auto_process=auto_process,
             notify_telegram=notify_telegram,
         )
         return
@@ -139,13 +145,13 @@ def run_forever(
         return
 
     run_both_forever(
-        auto_process_without_ai=auto_process_without_ai,
+        auto_process=auto_process,
         notify_telegram=notify_telegram,
     )
 
 
 def run_both_forever(
-    auto_process_without_ai: bool,
+    auto_process: bool,
     notify_telegram: bool,
 ) -> None:
     """
@@ -156,7 +162,7 @@ def run_both_forever(
     - edited watcher：监听 data/orders/{order_id}/edited/
     """
     folder_watcher = build_folder_watcher(
-        auto_process_without_ai=auto_process_without_ai,
+        auto_process=auto_process,
         notify_telegram=notify_telegram,
     )
     edited_watcher = build_edited_watcher(
@@ -198,7 +204,7 @@ def main() -> None:
     setup_logging(args.log_level or settings.log_level)
     init_db()
 
-    auto_process_without_ai = not args.no_auto_process
+    auto_process = not args.no_auto_process
     notify_telegram = not args.no_telegram
 
     logger.info("Xianyu photo workflow worker")
@@ -206,17 +212,19 @@ def main() -> None:
     logger.info(f"Incoming directory: {settings.incoming_dir}")
     logger.info(f"Orders directory: {settings.orders_dir}")
     logger.info(f"Database path: {settings.database_path}")
+    logger.info(f"IMAGE_PROCESSOR_MODE: {settings.image_processor_mode}")
+    logger.info(f"with_api auto processing: {auto_process}")
 
     if args.once:
         run_once(
             mode=args.mode,
-            auto_process_without_ai=auto_process_without_ai,
+            auto_process=auto_process,
             notify_telegram=notify_telegram,
         )
     else:
         run_forever(
             mode=args.mode,
-            auto_process_without_ai=auto_process_without_ai,
+            auto_process=auto_process,
             notify_telegram=notify_telegram,
         )
 
