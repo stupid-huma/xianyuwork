@@ -478,7 +478,7 @@ class OrderService:
     def process_order_without_ai(self, order_id: str) -> Order:
         """
         旧接口保留，但当前工作流已不再支持：
-        “无 API 时自动复制 original 作为 edited”。
+        “local 模式自动复制 original 作为 edited”。
         """
         raise RuntimeError(
             "process_order_without_ai() is deprecated in the current workflow. "
