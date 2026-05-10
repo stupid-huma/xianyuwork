@@ -95,9 +95,8 @@ LOG_LEVEL=INFO
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_ADMIN_USER_ID=
 
-ENABLE_OPENAI_API=false
 OPENAI_API_KEY=
-IMAGE_PROCESSOR_MODE=local
+QWEN_API_KEY=
 
 DATA_DIR=data
 INCOMING_DIR=data/incoming
@@ -109,6 +108,14 @@ WATERMARK_OPACITY=90
 PREVIEW_MAX_SIZE=1600
 SUPPORTED_IMAGE_EXTENSIONS=.jpg,.jpeg,.png,.webp
 WATCH_INTERVAL_SECONDS=2
+```
+
+`IMAGE_PROCESSOR_MODE`、`DEFAULT_IMAGE_PROMPT`、`API_PROVIDER` 不再放入 `.env`。
+处理模式和 provider 统一在 `config/settings.py` 中修改：
+
+```python
+image_processor_mode = "local"  # or "api"
+api_provider = "qwen"           # or "openai"
 ```
 
 只做本地测试时，Telegram 可以暂时不填。要启用 Telegram 审核时，再填入 BotFather token 和你的 Telegram 数字 ID。
@@ -221,7 +228,7 @@ python run_worker.py --mode both
 | `/help` | 查看帮助 |
 | `/list` | 查看最近订单 |
 | `/status ORD_xxx` | 查看订单状态与建议操作 |
-| `/process ORD_xxx` | 按 `IMAGE_PROCESSOR_MODE` 处理；local 模式只提示 edited 目录 |
+| `/process ORD_xxx` | 按 `config/settings.py` 里的 `image_processor_mode` 处理；local 模式只提示 edited 目录 |
 | `/previews ORD_xxx` | 重新发送水印预览图给你审核 |
 | `/approve ORD_xxx` | 内部审核通过，进入 `review_approved` |
 | `/reject ORD_xxx 原因` | 打回重做，进入 `rework_required` |
@@ -273,11 +280,11 @@ data/orders/{order_id}/edited/
 
 - 自动监听闲鱼聊天
 - 自动向闲鱼买家发送图片
-- 自动调用 OpenAI 图像 API
+- 自动调用已配置的图像 API provider
 - 自动识别买家是否确认收货
 
 这些能力后续可以作为独立模块接入，不需要推翻当前状态机。
 
 ## 11. 后续扩展
 
-接入图像 API 时，把 `IMAGE_PROCESSOR_MODE` 切到 `with_api`，并实现 `OrderService._process_single_image_with_api()` 中的“原图 -> edited 图”逻辑。状态机仍然保持：API 只负责产出 edited，preview 仍然从 edited 生成。
+接入图像 API 时，把 `config/settings.py` 里的 `image_processor_mode` 切到 `api`，再把 `api_provider` 设为 `qwen` 或 `openai`。API 只负责产出 edited，preview 仍然从 edited 生成。

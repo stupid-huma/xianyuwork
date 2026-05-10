@@ -12,6 +12,7 @@ from app.storage.file_store import FileStore, file_store
 from app.utils.id_generator import generate_image_id, generate_log_id, generate_order_id
 from config.paths import ProjectPaths, get_project_paths
 from config.settings import get_settings
+from services.image_api_client import process_image_with_provider
 
 
 class InvalidOrderTransitionError(RuntimeError):
@@ -34,7 +35,7 @@ class OrderService:
     1. original 只保存买家原图
     2. edited 只保存真正处理完成的图片
        - local 模式：人工放入 edited
-       - with_api 模式：API 输出到 edited
+       - api 模式：API 输出到 edited
     3. preview 只能从 edited 生成
     4. 审核通过、预览已发、买家确认必须是不同状态
     """
@@ -332,7 +333,7 @@ class OrderService:
 
         规则：
         - local：不自动生成 edited，等待你手动把修好的图放进 edited/
-        - with_api：自动走 API 处理，再从 edited 生成 preview
+        - api：自动走 API 处理，再从 edited 生成 preview
         """
         settings = get_settings()
         mode = processor_mode or getattr(settings, "image_processor_mode", "local")
@@ -344,17 +345,13 @@ class OrderService:
                 "then let edited_watcher generate previews."
             )
 
-        if mode != "with_api":
+        if mode != "api":
             raise ValueError(f"Unsupported processor mode: {mode}")
 
         order = self.start_processing(order_id)
 
         processed_count = 0
-        prompt = getattr(
-            settings,
-            "default_image_prompt",
-            "在保持原始构图、人物特征和色彩关系的基础上，提升清晰度、修复模糊、优化细节质感，输出自然真实的高清效果图。",
-        )
+        prompt = settings.default_image_prompt
 
         for image in order.images:
             if image.original_path is None:
@@ -362,7 +359,7 @@ class OrderService:
                 continue
 
             try:
-                edited_path = self._process_single_image_with_api(
+                edited_path = self._process_single_image_with_provider(
                     order=order,
                     image=image,
                     prompt=prompt,
@@ -377,26 +374,34 @@ class OrderService:
         if processed_count == 0:
             return self.mark_failed(
                 order.order_id,
-                "All images failed during with_api processing",
+                "All images failed during api processing",
             )
 
         return self.generate_previews(order.order_id)
 
-    def _process_single_image_with_api(
+    def _process_single_image_with_provider(
         self,
         order: Order,
         image: OrderImage,
         prompt: str,
     ) -> Path:
         """
-        with_api 接口预留点。
-
-        你后续接入 OpenAI API 或其他图像处理后端时，
-        就在这里完成“原图 -> edited 图”的处理，并返回生成后的 edited 路径。
+        Dispatch a single image to the configured API provider.
         """
-        raise NotImplementedError(
-            "with_api processor is reserved but not implemented yet. "
-            "Implement your API backend here and return the final edited image path."
+        if image.original_path is None:
+            raise ValueError(f"Missing original image path for image: {image.image_id}")
+
+        output_path = self.paths.build_edited_image_path(
+            order_id=order.order_id,
+            filename=image.filename,
+        )
+        output_path = self._avoid_output_overwrite(output_path)
+
+        return process_image_with_provider(
+            input_path=image.original_path,
+            output_path=output_path,
+            prompt=prompt,
+            settings=get_settings(),
         )
 
     def generate_preview_for_image(self, order_id: str, image_id: str) -> Order:
@@ -680,6 +685,21 @@ class OrderService:
 
     def _all_images_have_previews(self, order: Order) -> bool:
         return bool(order.images) and all(image.preview_path is not None for image in order.images)
+
+    def _avoid_output_overwrite(self, target_path: Path) -> Path:
+        if not target_path.exists():
+            return target_path
+
+        stem = target_path.stem
+        suffix = target_path.suffix
+        parent = target_path.parent
+
+        index = 1
+        while True:
+            candidate = parent / f"{stem}_{index:03d}{suffix}"
+            if not candidate.exists():
+                return candidate
+            index += 1
 
     def _archive_rejected_image_paths(self, order: Order, image: OrderImage) -> None:
         for label, path in (

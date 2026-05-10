@@ -206,7 +206,7 @@ class TelegramNotifier:
         mode_text = (
             "手动处理模式（local）"
             if processor_mode == "local"
-            else "自动处理模式（with_api）"
+            else "自动处理模式（api）"
         )
 
         lines = [

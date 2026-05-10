@@ -147,10 +147,10 @@ class TelegramWorkflowBot:
 
     async def handle_process(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
-        按 IMAGE_PROCESSOR_MODE 处理订单。
+        按 settings.py 里的 image_processor_mode 处理订单。
 
         - local：不自动处理，只提示把成图放入 edited/
-        - with_api：后续接 API 后通过 OrderService.process_order() 处理
+        - api：通过 OrderService.process_order() 自动处理
         """
         if not await self._ensure_admin(update):
             return

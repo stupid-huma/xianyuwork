@@ -1,17 +1,18 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """
-    全局配置入口。
+    Global configuration entrypoint.
 
-    所有配置优先从 .env 读取；如果 .env 没有设置，则使用这里的默认值。
-    后续如果你要切换成 OpenAI API、增加闲鱼监听源、换通知渠道，优先改这里。
+    Runtime secrets still come from .env. Workflow switches such as
+    image_processor_mode, api_provider, and default_image_prompt are intentionally
+    kept in this file so there is only one place to change processing behavior.
     """
 
     model_config = SettingsConfigDict(
@@ -34,9 +35,12 @@ class Settings(BaseSettings):
         alias="TELEGRAM_ADMIN_USER_ID",
     )
 
-    # OpenAI, optional for later
-    enable_openai_api: bool = Field(default=False, alias="ENABLE_OPENAI_API")
+    # API secrets. Do not put provider switches in .env.
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    qwen_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("QWEN_API_KEY", "DASHSCOPE_API_KEY"),
+    )
 
     # Paths
     data_dir: Path = Field(default=Path("data"), alias="DATA_DIR")
@@ -47,16 +51,32 @@ class Settings(BaseSettings):
         alias="DATABASE_PATH",
     )
 
-    # Image processing
-    image_processor_mode: Literal["local", "with_api"] = Field(
-        default="local",
-        alias="IMAGE_PROCESSOR_MODE",
+    # Image workflow switches. Change these in settings.py, not .env.
+    image_processor_mode: ClassVar[Literal["local", "api"]] = "local"
+    api_provider: ClassVar[Literal["qwen", "openai"]] = "qwen"
+    default_image_prompt: ClassVar[str] = (
+        "在保持原始构图、人物特征和色彩关系的基础上，提升清晰度、修复模糊、"
+        "优化细节质感，输出自然真实的高清效果图。"
     )
 
-    default_image_prompt: str = Field(
-        default="在保持原始构图、人物特征和色彩关系的基础上，提升清晰度、修复模糊、优化细节质感，输出自然真实的高清效果图。",
-        alias="DEFAULT_IMAGE_PROMPT",
+    # OpenAI image API settings.
+    openai_image_model: ClassVar[str] = "gpt-image-1"
+
+    # Qwen / DashScope image API settings.
+    qwen_endpoint: ClassVar[str] = (
+        "https://dashscope.aliyuncs.com/api/v1/services/aigc/"
+        "multimodal-generation/generation"
     )
+    qwen_image_model: ClassVar[str] = "qwen-image-2.0-pro"
+    qwen_image_count: ClassVar[int] = 1
+    qwen_negative_prompt: ClassVar[str] = " "
+    qwen_prompt_extend: ClassVar[bool] = True
+    qwen_watermark: ClassVar[bool] = False
+    qwen_image_size: ClassVar[str] = ""
+
+    api_request_timeout_seconds: ClassVar[float] = 180.0
+
+    # Local preview processing
     watermark_text: str = Field(default="PREVIEW", alias="WATERMARK_TEXT")
     watermark_opacity: int = Field(default=90, alias="WATERMARK_OPACITY")
     preview_max_size: int = Field(default=1600, alias="PREVIEW_MAX_SIZE")
@@ -70,12 +90,6 @@ class Settings(BaseSettings):
 
     @property
     def supported_image_extensions(self) -> tuple[str, ...]:
-        """
-        把 .env 里的字符串：
-            .jpg,.jpeg,.png,.webp
-        转成：
-            (".jpg", ".jpeg", ".png", ".webp")
-        """
         return tuple(
             item.strip().lower()
             for item in self.supported_image_extensions_raw.split(",")
@@ -84,28 +98,28 @@ class Settings(BaseSettings):
 
     @property
     def sqlite_url(self) -> str:
-        """
-        SQLAlchemy 使用的 SQLite 连接地址。
-        """
         return f"sqlite:///{self.database_path.as_posix()}"
 
     def ensure_directories(self) -> None:
-        """
-        启动项目前，确保必要目录都存在。
-        """
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.incoming_dir.mkdir(parents=True, exist_ok=True)
         self.orders_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
     def validate_runtime_config(self) -> None:
-        """
-        运行时校验。
+        if self.image_processor_mode not in {"local", "api"}:
+            raise ValueError("image_processor_mode must be either 'local' or 'api'")
 
-        注意：不是所有模式都必须配置 Telegram。
-        例如你只运行文件夹 worker 时，可以暂时不填 TELEGRAM_BOT_TOKEN。
-        真正启动 bot 时再检查更合适。
-        """
+        if self.api_provider not in {"qwen", "openai"}:
+            raise ValueError("api_provider must be either 'qwen' or 'openai'")
+
+        if self.image_processor_mode == "api":
+            if self.api_provider == "openai" and not self.openai_api_key:
+                raise ValueError("OPENAI_API_KEY is required when api_provider='openai'")
+
+            if self.api_provider == "qwen" and not self.qwen_api_key:
+                raise ValueError("QWEN_API_KEY or DASHSCOPE_API_KEY is required when api_provider='qwen'")
+
         if self.watermark_opacity < 0 or self.watermark_opacity > 255:
             raise ValueError("WATERMARK_OPACITY must be between 0 and 255")
 
@@ -116,9 +130,6 @@ class Settings(BaseSettings):
             raise ValueError("WATCH_INTERVAL_SECONDS must be greater than 0")
 
     def validate_telegram_config(self) -> None:
-        """
-        启动 Telegram Bot 前调用。
-        """
         if not self.telegram_bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required to run Telegram bot")
 
@@ -135,7 +146,4 @@ def load_settings() -> Settings:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """
-    缓存配置对象，避免项目里每个模块重复读取 .env。
-    """
     return load_settings()

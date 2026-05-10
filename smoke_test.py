@@ -91,7 +91,7 @@ def run_smoke_test() -> None:
     logger.info(f"Incoming directory: {settings.incoming_dir}")
     logger.info(f"Orders directory: {settings.orders_dir}")
     logger.info(f"Database path: {settings.database_path}")
-    logger.info(f"IMAGE_PROCESSOR_MODE: {settings.image_processor_mode}")
+    logger.info(f"image_processor_mode: {settings.image_processor_mode}")
 
     source_image = create_test_image(settings.incoming_dir / TEST_IMAGE_NAME)
     logger.info(f"Created test image: {source_image}")

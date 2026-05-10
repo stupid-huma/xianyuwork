@@ -146,7 +146,7 @@ def build_help_text() -> str:
             "常用命令：",
             "<code>/list</code> - 查看最近订单",
             "<code>/status ORD_xxx</code> - 查看订单状态与建议操作",
-            "<code>/process ORD_xxx</code> - 按 IMAGE_PROCESSOR_MODE 处理。local 模式只提示 edited 目录，with_api 模式后续用于自动处理",
+            "<code>/process ORD_xxx</code> - 按 settings.py 里的 image_processor_mode 处理。local 模式只提示 edited 目录，api 模式自动处理",
             "<code>/previews ORD_xxx</code> - 重新发送水印预览图给你审核",
             "",
             "审核命令：",

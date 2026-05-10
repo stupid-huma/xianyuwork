@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--no-auto-process",
         action="store_true",
         help=(
-            "关闭 with_api 自动处理。local 模式本来不会自动生成 edited/preview；"
+            "关闭 api 自动处理。local 模式本来不会自动生成 edited/preview；"
             "开启后 folder worker 只建单收图，等待 edited 回流。"
         ),
     )
@@ -212,8 +212,9 @@ def main() -> None:
     logger.info(f"Incoming directory: {settings.incoming_dir}")
     logger.info(f"Orders directory: {settings.orders_dir}")
     logger.info(f"Database path: {settings.database_path}")
-    logger.info(f"IMAGE_PROCESSOR_MODE: {settings.image_processor_mode}")
-    logger.info(f"with_api auto processing: {auto_process}")
+    logger.info(f"image_processor_mode: {settings.image_processor_mode}")
+    logger.info(f"api_provider: {settings.api_provider}")
+    logger.info(f"api auto processing: {auto_process}")
 
     if args.once:
         run_once(

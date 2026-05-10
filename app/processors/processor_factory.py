@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.processors.base_image_processor import BaseImageProcessor
 from app.processors.local_copy_processor import LocalCopyImageProcessor
-from app.processors.with_api_processor import WithApiImageProcessor
+from app.processors.api_processor import ApiImageProcessor
 from config.settings import get_settings
 
 
@@ -13,7 +13,7 @@ def build_image_processor(mode: str | None = None) -> BaseImageProcessor:
     if selected_mode == "local":
         return LocalCopyImageProcessor()
 
-    if selected_mode == "with_api":
-        return WithApiImageProcessor()
+    if selected_mode == "api":
+        return ApiImageProcessor()
 
     raise ValueError(f"Unsupported image processor mode: {selected_mode}")

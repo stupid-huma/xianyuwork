@@ -130,7 +130,7 @@ class EditedWatcher:
         找出可能正在等待 edited 成图的订单。
 
         - WAITING_FOR_EDITED：local 模式下刚收图，等待人工修图
-        - PROCESSING：with_api 或外部程序正在处理，允许成图回流
+        - PROCESSING：api 或外部程序正在处理，允许成图回流
         - REWORK_REQUIRED：审核打回后，等待重修图
         - FAILED：允许人工补救
         """

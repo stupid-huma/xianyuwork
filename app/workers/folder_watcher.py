@@ -38,14 +38,14 @@ class FolderWatcher:
     2. watcher 发现图片
     3. 自动创建订单
     4. 把原图复制到订单 original 目录
-    5. 根据 IMAGE_PROCESSOR_MODE 决定下一步：
+    5. 根据 settings.py 里的 image_processor_mode 决定下一步：
 
        - local:
          不自动生成 edited / preview
          订单进入 WAITING_FOR_EDITED
          Telegram 只提醒：请把修好的图放进 edited/
 
-       - with_api:
+       - api:
          自动调用 order_service.process_order()
          → API 输出 edited
          → 生成 preview
@@ -95,7 +95,7 @@ class FolderWatcher:
         logger.info(f"Incoming directory: {self.source.incoming_dir}")
         logger.info(f"Watch interval: {self.settings.watch_interval_seconds}s")
         logger.info(f"Telegram notification: {self.notify_telegram}")
-        logger.info(f"IMAGE_PROCESSOR_MODE: {self.settings.image_processor_mode}")
+        logger.info(f"image_processor_mode: {self.settings.image_processor_mode}")
 
         try:
             while self._running:
@@ -135,17 +135,17 @@ class FolderWatcher:
 
             processor_mode = self.settings.image_processor_mode
 
-            if processor_mode == "with_api":
+            if processor_mode == "api":
                 if self.auto_process:
-                    logger.info(f"with_api mode detected, processing order: {order.order_id}")
+                    logger.info(f"api mode detected, processing order: {order.order_id}")
                     try:
-                        order = self.service.process_order(order.order_id, processor_mode="with_api")
-                    except NotImplementedError as exc:
-                        logger.warning(str(exc))
+                        order = self.service.process_order(order.order_id, processor_mode="api")
+                    except Exception as exc:
+                        logger.exception("API processing failed")
                         order = self.service.mark_failed(order.order_id, str(exc))
                 else:
                     logger.info(
-                        "with_api mode is enabled, but auto processing is disabled by CLI option. "
+                        "api mode is enabled, but auto processing is disabled by CLI option. "
                         "Order will remain waiting for edited images."
                     )
                     order = self.service.wait_for_edited(order.order_id)
@@ -223,7 +223,7 @@ class FolderWatcher:
 
     def _notify_status_if_possible(self, order: Order) -> None:
         """
-        with_api 模式处理失败或等待外部处理时，发一条订单状态通知。
+        api 模式处理失败或等待外部处理时，发一条订单状态通知。
         """
         if not self.settings.telegram_bot_token or self.settings.telegram_admin_user_id is None:
             logger.warning("Telegram is not configured. Skipped order-status notification.")
