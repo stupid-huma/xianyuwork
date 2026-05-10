@@ -52,29 +52,29 @@ class Settings(BaseSettings):
     )
 
     # Image workflow switches. Change these in settings.py, not .env.
-    image_processor_mode: ClassVar[Literal["local", "api"]] = "local"
-    api_provider: ClassVar[Literal["qwen", "openai"]] = "qwen"
-    default_image_prompt: ClassVar[str] = (
+    image_processor_mode: Literal["local", "api"] = "local"
+    api_provider: Literal["qwen", "openai"] = "qwen"
+    default_image_prompt: str = (
         "在保持原始构图、人物特征和色彩关系的基础上，提升清晰度、修复模糊、"
         "优化细节质感，输出自然真实的高清效果图。"
     )
 
     # OpenAI image API settings.
-    openai_image_model: ClassVar[str] = "gpt-image-1"
+    openai_image_model: str = "gpt-image-1"
 
     # Qwen / DashScope image API settings.
-    qwen_endpoint: ClassVar[str] = (
+    qwen_endpoint: str = (
         "https://dashscope.aliyuncs.com/api/v1/services/aigc/"
         "multimodal-generation/generation"
     )
-    qwen_image_model: ClassVar[str] = "qwen-image-2.0-pro"
-    qwen_image_count: ClassVar[int] = 1
-    qwen_negative_prompt: ClassVar[str] = " "
-    qwen_prompt_extend: ClassVar[bool] = True
-    qwen_watermark: ClassVar[bool] = False
-    qwen_image_size: ClassVar[str] = ""
+    qwen_image_model: str = "qwen-image-2.0-pro"
+    qwen_image_count: int = 1
+    qwen_negative_prompt: str = " "
+    qwen_prompt_extend: bool = True
+    qwen_watermark: bool = False
+    qwen_image_size: str = ""
 
-    api_request_timeout_seconds: ClassVar[float] = 180.0
+    api_request_timeout_seconds: float = 180.0
 
     # Local preview processing
     watermark_text: str = Field(default="PREVIEW", alias="WATERMARK_TEXT")

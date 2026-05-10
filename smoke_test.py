@@ -15,8 +15,9 @@ from config.settings import get_settings
 
 
 TEST_IMAGE_NAME = "smoke_test_input.jpg"
-
-
+# --------------------------------------
+#incoming文件夹为空时运行，自己生成的图片无影响
+#---------------------------------------
 def create_test_image(path: Path) -> Path:
     """
     创建一张测试图片。
