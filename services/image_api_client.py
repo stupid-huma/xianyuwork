@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import mimetypes
 from io import BytesIO
 from pathlib import Path
 
@@ -29,6 +30,36 @@ def process_image_with_provider(
 
     if provider == "openai":
         from services.openai_client import process_image
+
+        return process_image(
+            input_path=input_path,
+            output_path=output_path,
+            prompt=prompt,
+            settings=settings,
+        )
+
+    if provider in {"gemini", "gemini_flash", "gemini_pro"}:
+        from services.gemini_client import process_image
+
+        return process_image(
+            input_path=input_path,
+            output_path=output_path,
+            prompt=prompt,
+            settings=settings,
+        )
+
+    if provider == "leonardo":
+        from services.leonardo_client import process_image
+
+        return process_image(
+            input_path=input_path,
+            output_path=output_path,
+            prompt=prompt,
+            settings=settings,
+        )
+
+    if provider == "doubao":
+        from services.doubao_client import process_image
 
         return process_image(
             input_path=input_path,
@@ -76,6 +107,15 @@ def write_image_bytes(image_bytes: bytes, output_path: Path) -> Path:
         output_path.write_bytes(image_bytes)
 
     return output_path
+
+
+def encode_image_data_url(input_path: Path) -> str:
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input image does not exist: {input_path}")
+
+    mime_type = mimetypes.guess_type(input_path.name)[0] or "image/jpeg"
+    encoded = base64.b64encode(input_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def _decode_base64_image(image_reference: str) -> bytes:

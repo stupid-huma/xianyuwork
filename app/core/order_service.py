@@ -351,7 +351,7 @@ class OrderService:
         order = self.start_processing(order_id)
 
         processed_count = 0
-        prompt = settings.default_image_prompt
+        prompt = settings.selected_image_prompt
 
         for image in order.images:
             if image.original_path is None:
@@ -424,7 +424,7 @@ class OrderService:
         image.mark_preview_generated(preview_path)
         self._save(order)
 
-        if self._all_images_have_previews(order):
+        if self._all_images_have_previews(order) and self._can_finish_processing(order):
             order = self._transition(
                 order,
                 OrderEvent.FINISH_PROCESSING,
@@ -470,7 +470,7 @@ class OrderService:
                 "No preview images were generated from edited images",
             )
 
-        if self._all_images_have_previews(order):
+        if self._all_images_have_previews(order) and self._can_finish_processing(order):
             order = self._transition(
                 order,
                 OrderEvent.FINISH_PROCESSING,
@@ -685,6 +685,10 @@ class OrderService:
 
     def _all_images_have_previews(self, order: Order) -> bool:
         return bool(order.images) and all(image.preview_path is not None for image in order.images)
+
+    def _can_finish_processing(self, order: Order) -> bool:
+        allowed_from, _ = self.TRANSITIONS[OrderEvent.FINISH_PROCESSING]
+        return allowed_from is None or order.status in allowed_from
 
     def _avoid_output_overwrite(self, target_path: Path) -> Path:
         if not target_path.exists():
