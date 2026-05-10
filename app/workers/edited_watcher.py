@@ -26,6 +26,7 @@ class EditedWatcherResult:
     edited_file: Path
     image_id: str | None = None
     success: bool = False
+    skipped: bool = False
     error: str | None = None
 
 
@@ -130,13 +131,12 @@ class EditedWatcher:
         找出可能正在等待 edited 成图的订单。
 
         - WAITING_FOR_EDITED：local 模式下刚收图，等待人工修图
-        - PROCESSING：api 或外部程序正在处理，允许成图回流
+        - API 自动处理由 folder_watcher 负责，不在这里扫描 PROCESSING，避免重复处理 API 输出
         - REWORK_REQUIRED：审核打回后，等待重修图
         - FAILED：允许人工补救
         """
         statuses = [
             OrderStatus.WAITING_FOR_EDITED,
-            OrderStatus.PROCESSING,
             OrderStatus.REWORK_REQUIRED,
             OrderStatus.FAILED,
         ]
@@ -207,9 +207,6 @@ class EditedWatcher:
         try:
             logger.info(f"Handling edited file: {edited_file}")
 
-            if not self.store.wait_until_file_stable(edited_file):
-                raise RuntimeError(f"File is not stable or timed out: {edited_file}")
-
             order = self.service.get_order(order.order_id)
             image = self._match_image(order, edited_file)
 
@@ -218,6 +215,21 @@ class EditedWatcher:
                     f"Could not match edited file to any image in order {order.order_id}: "
                     f"{edited_file.name}"
                 )
+
+            result.image_id = image.image_id
+
+            if self._is_already_previewed_edited_file(image, edited_file):
+                result.success = True
+                result.skipped = True
+                self._remember_file(edited_file)
+                logger.info(
+                    f"Skipping already previewed edited file: "
+                    f"order={order.order_id}, image={image.image_id}, file={edited_file.name}"
+                )
+                return result
+
+            if not self.store.wait_until_file_stable(edited_file):
+                raise RuntimeError(f"File is not stable or timed out: {edited_file}")
 
             image.mark_edited(edited_file)
             self.service.repository.save_order(order)
@@ -228,7 +240,6 @@ class EditedWatcher:
                 image_id=image.image_id,
             )
 
-            result.image_id = image.image_id
             result.success = True
             self._remember_file(edited_file)
 
@@ -299,6 +310,18 @@ class EditedWatcher:
         """
         error_path = edited_file.with_suffix(edited_file.suffix + ".watcher_error.txt")
         error_path.write_text(str(error), encoding="utf-8")
+
+    def _is_already_previewed_edited_file(self, image: OrderImage, edited_file: Path) -> bool:
+        if image.edited_path is None or image.preview_path is None:
+            return False
+
+        return self._same_existing_path(image.edited_path, edited_file)
+
+    def _same_existing_path(self, left: Path, right: Path) -> bool:
+        if left.exists() and right.exists():
+            return left.resolve() == right.resolve()
+
+        return left.as_posix() == right.as_posix()
 
     def _notify_review_if_possible(self, order: Order) -> None:
         """

@@ -21,7 +21,7 @@ class ApiImageProcessor(BaseImageProcessor):
             output_path = process_image_with_provider(
                 input_path=request.input_path,
                 output_path=request.output_path,
-                prompt=request.prompt or settings.default_image_prompt,
+                prompt=request.prompt or settings.selected_image_prompt,
                 settings=settings,
             )
         except Exception as exc:

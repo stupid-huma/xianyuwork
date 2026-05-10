@@ -97,6 +97,9 @@ TELEGRAM_ADMIN_USER_ID=
 
 OPENAI_API_KEY=
 QWEN_API_KEY=
+GEMINI_API_KEY=
+LEONARDO_API_KEY=
+DOUBAO_API_KEY=
 
 DATA_DIR=data
 INCOMING_DIR=data/incoming
@@ -111,11 +114,12 @@ WATCH_INTERVAL_SECONDS=2
 ```
 
 `IMAGE_PROCESSOR_MODE`、`DEFAULT_IMAGE_PROMPT`、`API_PROVIDER` 不再放入 `.env`。
-处理模式和 provider 统一在 `config/settings.py` 中修改：
+处理模式、provider 和提示词模式统一在 `config/settings.py` 中修改：
 
 ```python
 image_processor_mode = "local"  # or "api"
-api_provider = "qwen"           # or "openai"
+api_provider = "qwen"           # qwen / openai / gemini_flash / gemini_pro / leonardo / doubao
+image_prompt_mode = "repair"    # repair / reference_generate / custom
 ```
 
 只做本地测试时，Telegram 可以暂时不填。要启用 Telegram 审核时，再填入 BotFather token 和你的 Telegram 数字 ID。
@@ -272,6 +276,7 @@ data/orders/{order_id}/edited/
 - metadata.json 备份
 - 人工成图回流
 - 从 edited 生成水印 preview
+- API 模式调用 Qwen、OpenAI、Gemini Flash/Pro、Leonardo、Doubao 生成 edited
 - Telegram 审核与状态推进
 - 打回重做归档
 - local 模式完整冒烟测试
@@ -280,11 +285,50 @@ data/orders/{order_id}/edited/
 
 - 自动监听闲鱼聊天
 - 自动向闲鱼买家发送图片
-- 自动调用已配置的图像 API provider
 - 自动识别买家是否确认收货
 
 这些能力后续可以作为独立模块接入，不需要推翻当前状态机。
 
 ## 11. 后续扩展
 
-接入图像 API 时，把 `config/settings.py` 里的 `image_processor_mode` 切到 `api`，再把 `api_provider` 设为 `qwen` 或 `openai`。API 只负责产出 edited，preview 仍然从 edited 生成。
+接入图像 API 时，把 `config/settings.py` 里的 `image_processor_mode` 切到 `api`，再设置 `api_provider`：
+
+```python
+image_processor_mode = "api"
+
+# 可选：
+api_provider = "qwen"
+api_provider = "openai"
+api_provider = "gemini_flash"
+api_provider = "gemini_pro"
+api_provider = "leonardo"
+api_provider = "doubao"
+```
+
+提示词模式也在 `config/settings.py` 中切换：
+
+```python
+# 修复/增强原图，尽量保持构图和人物特征
+image_prompt_mode = "repair"
+
+# 参考输入图生成新图，允许姿势和构图明显变化
+image_prompt_mode = "reference_generate"
+
+# 完全使用 custom_image_prompt
+image_prompt_mode = "custom"
+```
+
+对应密钥仍然只放 `.env`：
+
+```env
+OPENAI_API_KEY=
+QWEN_API_KEY=
+GEMINI_API_KEY=
+LEONARDO_API_KEY=
+DOUBAO_API_KEY=
+# Doubao 也支持使用 ARK_API_KEY 作为别名
+```
+
+Gemini 默认使用 `gemini-3.1-flash-image-preview` 和 `gemini-3-pro-image-preview`，Doubao 默认使用 `doubao-seedream-4-5-251128`，Leonardo 默认使用 Leonardo Lightning XL 的 model id。具体模型名都在 `config/settings.py` 里改。
+
+所有 API provider 都只负责产出 edited，preview 仍然从 edited 生成。API 自动处理已经由 folder watcher 完成，edited watcher 不会再重复处理同一张 API 输出图。

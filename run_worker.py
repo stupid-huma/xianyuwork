@@ -107,7 +107,12 @@ def run_once(
         ) or []
         logger.info(f"Edited watcher processed {len(edited_results)} item(s)")
         for result in edited_results:
-            if result.success:
+            if result.success and result.skipped:
+                logger.info(
+                    f"SKIPPED edited file={result.edited_file}, "
+                    f"order={result.order_id}, image={result.image_id}"
+                )
+            elif result.success:
                 logger.info(
                     f"OK edited file={result.edited_file}, "
                     f"order={result.order_id}, image={result.image_id}"
