@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     )
 
     # OpenAI image API settings.
-    openai_image_model: str = "gpt-image-1"
+    openai_image_model: str = "gpt-image-1.5"
 
     # Qwen / DashScope image API settings.
     qwen_endpoint: str = (
