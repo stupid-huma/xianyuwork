@@ -6,7 +6,7 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # -------------------------------------------------------------------------
-#
+#           改处理方式，改API，改提示词，改模型版本
 #
 # -------------------------------------------------------------------------
 class Settings(BaseSettings):
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
         "优化细节质感，输出自然真实的高清效果图。"
     )
     reference_generation_prompt: str = (
-        "参考输入图的角色、画风、服饰、色彩和核心视觉元素，生成一张油画新图。"
+        "参考输入图的角色、画风、服饰、色彩和核心视觉元素，生成一张国画新图。"
         "允许重新构图和改变动作，不要只做清晰度修复；输出自然完整、细节丰富的成图。"
     )
     custom_image_prompt: str = ""
